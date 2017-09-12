@@ -1,4 +1,4 @@
-# Serial-COM-Port-NMEA-Parser
+# NMEA Parser for Serial COM Ports
 Using ESRI's Runtime 100.x framework, this class accesses a Serial COM port and provides information based on the NMEA strings read from the port
 
 Class for converting NMEA GPS data supplied through a Serial COM Port into a format that is usable by ESRI's runtime library.
