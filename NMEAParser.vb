@@ -76,7 +76,7 @@ Public Class NMEAParser
             Return Task.Run(startAction)
 
         Catch ex As Exception
-            'Include error handling here
+            
             Return Nothing
 
         End Try
@@ -119,7 +119,6 @@ Public Class NMEAParser
             _serialPort = Nothing
             RaiseEvent HasClosed()
             _closeTask.TrySetResult(True)
-            '_locationData = Nothing
 
         Catch ex As Exception
 
@@ -132,22 +131,16 @@ Public Class NMEAParser
     Private Sub _serialPort_DataReceived(sender As Object, e As SerialDataReceivedEventArgs) Handles _serialPort.DataReceived
         Try
             If _canRead Then
-                '_timeoutTimer.Stop()
-
                 Dim msg As String = _serialPort.ReadTo(vbCrLf)
 
                 If CheckNMEACheckSum(msg) Then
                     ParseNMEA(msg)
+            
                 End If
-
-                '_timeoutTimer.Start()
 
             End If
 
-            'Catch ioex As IO.IOException
-
         Catch ex As Exception
-
 
             NEW_LOCATION(False)
 
@@ -183,7 +176,7 @@ Public Class NMEAParser
     ''' <returns>True if the checksum corresponds to the value found for the string.  False o.w.</returns>
     Private Function CheckNMEACheckSum(ByVal sentence As String) As Boolean
         Try
-            '* used to flag the start of the checksum.  If cn't find, the string is bad and should be ignored
+            '* used to flag the start of the checksum.  If can't find, the string is bad and should be ignored
             If sentence.IndexOf("*") <= 0 Then
                 Return False
 
@@ -209,7 +202,7 @@ Public Class NMEAParser
             Return NMEAchecksum(1) = checksumHex
 
         Catch ex As Exception
-            'Include error handling here
+            
             Return False
         End Try
     End Function
@@ -228,7 +221,7 @@ Public Class NMEAParser
             Dim sentenceArray() As String = sentence.Split(Convert.ToChar(","))
 
             If sentenceArray(0).Contains("GGA") Then
-                '_locationData.UtcTime = Convert.ToDouble(sentenceArray(1))
+          
                 SET_NUM_SATELLITES = sentenceArray(7)
                 SET_HDOP = sentenceArray(8)
                 SetLocation(sentenceArray(2), sentenceArray(3), sentenceArray(4), sentenceArray(5))
@@ -248,7 +241,7 @@ Public Class NMEAParser
 
         ElseIf sentenceArray(0).Contains("VTG") Then
                 SET_HEADING = sentenceArray(1)
-            SET_VELOCITY(False) = sentenceArray(7)
+                SET_VELOCITY(False) = sentenceArray(7)
 
         End If
 
@@ -256,18 +249,11 @@ Public Class NMEAParser
     End Sub
 
     Public Sub Dispose() Implements IDisposable.Dispose
-        Try
             If IsStarted Then
                 StopAsync()
 
             End If
 
-        Catch ex As Exception
-            Common.WriteToErrorLog(System.Reflection.MethodBase.GetCurrentMethod.DeclaringType.Name,
-                                 System.Reflection.MethodInfo.GetCurrentMethod.Name,
-                                 ex.Message)
-
-        End Try
     End Sub
 
     ''' <summary>
@@ -324,7 +310,7 @@ Public Class NMEAParser
             Dim latComponent As Double = ParseCoordinates(latitude, lat_hemisphere)
 
             If longComponent = Double.NaN OrElse latComponent = Double.NaN Then
-                '_location = New Map
+                
                 _fixQuality = FixQuality.Invalid
 
             Else
@@ -334,12 +320,11 @@ Public Class NMEAParser
                 End If
 
                 _fixQuality = FixQuality.Estimated
-                    '_havePosition = True
+                    
                 End If
 
         Catch ex As Exception
 
-            '_location = Nothing
             _fixQuality = FixQuality.Invalid
         End Try
     End Sub
@@ -355,7 +340,7 @@ Public Class NMEAParser
                 Return False
 
             Else
-                Return _serialPort.IsOpen 'AndAlso MyBase.IsStarted
+                Return _serialPort.IsOpen 
 
             End If
 
@@ -533,7 +518,6 @@ Public Class NMEAParser
 
         End If
 
-        'End Get
     End Sub
 
     ''' <summary>
