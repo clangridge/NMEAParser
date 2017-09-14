@@ -5,10 +5,8 @@ Imports System.Timers
 
 ''' <summary>
 ''' Class for converting NMEA GPS data supplied through a Serial COM Port into a format that is usable by ESRI's runtime library.
-''' Notes about usage: When calling the StopAsync function, you must either set up an event handler to listen for the HasClosed event in this class or else Await the Task associated with the StopAsync Function.  Until either of these occurs, the user cannot be allowed to restart the application or they can lock the application.  This is due to the resources that the serial port is using being on another thread, so the application needs to wait for that other thread to complete to be sure all the resources have been released and it is safe to reconnect to the com port.
-''' You must also wait for the HasClosed event to fire or the Task from OnStop to complete when closing the form that originally owned the class.  If you don't, the form will not be able to close as it will still be receiving updates from the class, which will block the form from closing.
-''' 
-''' It should be noted that in testing, using the Event path worked better with ESRI's MapView.LocationDisplay functionality.  Directly calling the StopAsync doesn't properly disconnect the data supply from the map, so even though you have called it, locations still are displayed on the map.
+''' Notes about usage: When starting and stopping the COM port during usage, the OnStartAsync function will wait until the previous close action has completed before trying to restart the COM port, freeing the requirement to listen for the HasClosed event.  
+''' The HasClosed event is still needed, however, when trying to close the form that owns the instance of the class.  Trying to use async methods in the FormClosing event leads to TokenCancellation errors in  WindowsBase.dll.  There seems to be no way around this as the async command doesn't stop the closing event, leading to threads not completing before the form closes.
 ''' 
 ''' Clark Langridge, New Brunswick Dept. of Energy and Resource Development, September 2017
 ''' </summary>
@@ -30,7 +28,7 @@ Public Class NMEAParser
     Private _heading As Double = 0
     'Private _havePosition As Boolean = False
     Private WithEvents _timeoutTimer As New Timer
-    Private _closeTask As TaskCompletionSource(Of Boolean)
+    Private _closeTask As TaskCompletionSource(Of Boolean) = Nothing
     Private _timeOutInterval As Integer = 5000
     'Private _formClosing As Boolean = False
 
@@ -56,8 +54,10 @@ Public Class NMEAParser
 
     End Sub
 
-    Protected Overrides Function OnStartAsync() As Task
-        Try
+
+    Private Sub StartCOMPort()
+
+        If Not Me.IsStarted Then
             If _serialPort Is Nothing Then
                 _serialPort = New SerialPort(COM_PORT, BAUD_RATE)
 
@@ -67,32 +67,56 @@ Public Class NMEAParser
             _serialPort.ReadTimeout = SerialPort.InfiniteTimeout
             _timeoutTimer.Interval = TIMEOUT_INTERNAL
 
-
-            Dim startAction As Action = AddressOf _serialPort.Open
-            '_serialPort.Open()
-            '_receptionTimer.Start()
+            _serialPort.Open()
             _canRead = True
             _timeoutTimer.Start()
-            Return Task.Run(startAction)
 
-        Catch ex As Exception
-            
-            Return Nothing
+        Else
+            Throw New Exception("COM Port already started")
 
-        End Try
+        End If
+
+
+    End Sub
+
+    Protected Overrides Function OnStartAsync() As Task
+
+        'If the COM POrt has been opened before, then the _closeTask Object will not be nothing
+        If _closeTask IsNot Nothing Then
+            'If an error occurred when closing the COM port last time, re-raise the error to prevent it from happening again
+            If _closeTask.Task.IsFaulted Then
+                Throw _closeTask.Task.Exception
+
+                'If the Task somehow was cancelled when closing the COM port last, the COM port may not have closed properly and could cause issues when trying to reopen it
+            ElseIf _closeTask.Task.IsCanceled Then
+                Throw New Exception("Attempt to close COM port cancelled before it could complete.  Restart the device and try again.")
+
+            Else
+                'Wait for the closing Task to complete, so that all resources have been properly disposed of, then reopen the COM port
+                Return _closeTask.Task.ContinueWith(Sub() StartCOMPort())
+
+            End If
+
+
+        Else
+            'First time opening it, porceed directly 
+            Return Task.Run(Sub() StartCOMPort())
+
+        End If
+
 
     End Function
 
     Protected Overrides Function OnStopAsync() As Task
 
-        Try
+        If Me.IsStarted Then
             _canRead = False
             _timeoutTimer.Stop()
 
             Dim taskList As New List(Of Task)(2)
             'Creates a Task to be completed when the Serial COM Port has finished closing
             _closeTask = New TaskCompletionSource(Of Boolean)
-            taskList.Add(_closeTask.Task)
+            'taskList.Add(_closeTask.Task)
 
             'Need to convert the Close sub to an action or else the Function hangs on the call to the sub.
             Dim stopAction As Action = AddressOf _serialPort.Close
@@ -100,10 +124,10 @@ Public Class NMEAParser
 
             Return Task.WhenAll(taskList.ToArray())
 
-        Catch ex As Exception
+        Else
+            Throw New Exception("COM Port already closed.")
 
-            Return Nothing
-        End Try
+        End If
 
     End Function
 
@@ -131,11 +155,12 @@ Public Class NMEAParser
     Private Sub _serialPort_DataReceived(sender As Object, e As SerialDataReceivedEventArgs) Handles _serialPort.DataReceived
         Try
             If _canRead Then
+
+
                 Dim msg As String = _serialPort.ReadTo(vbCrLf)
 
                 If CheckNMEACheckSum(msg) Then
                     ParseNMEA(msg)
-            
                 End If
 
             End If
@@ -150,19 +175,18 @@ Public Class NMEAParser
     Private Sub _serialPort_ErrorReceived(sender As Object, e As SerialErrorReceivedEventArgs) Handles _serialPort.ErrorReceived
 
         If _location IsNot Nothing Then
-                NEW_LOCATION(False)
+            NEW_LOCATION(False)
 
-            End If
+        End If
+
 
     End Sub
 
     Private Sub _timeoutTimer_Elapsed(sender As Object, e As ElapsedEventArgs) Handles _timeoutTimer.Elapsed
-
         If _location IsNot Nothing Then
-                NEW_LOCATION(False)
+            NEW_LOCATION(False)
 
-            End If
-
+        End If
 
     End Sub
 
@@ -176,7 +200,7 @@ Public Class NMEAParser
     ''' <returns>True if the checksum corresponds to the value found for the string.  False o.w.</returns>
     Private Function CheckNMEACheckSum(ByVal sentence As String) As Boolean
         Try
-            '* used to flag the start of the checksum.  If can't find, the string is bad and should be ignored
+            '* used to flag the start of the checksum.  If cn't find, the string is bad and should be ignored
             If sentence.IndexOf("*") <= 0 Then
                 Return False
 
@@ -202,7 +226,7 @@ Public Class NMEAParser
             Return NMEAchecksum(1) = checksumHex
 
         Catch ex As Exception
-            
+
             Return False
         End Try
     End Function
@@ -213,19 +237,22 @@ Public Class NMEAParser
     ''' </summary>
     ''' <param name="sentence">The NMEA sentence to be parsed</param>
     Private Sub ParseNMEA(ByVal sentence As String)
-        'Try
+
         If sentence Is Nothing Then
-                Exit Sub
+            Exit Sub
+        End If
+
+        Dim sentenceArray() As String = sentence.Split(Convert.ToChar(","))
+
+        If sentenceArray(0).Contains("GGA") Then
+            '_locationData.UtcTime = Convert.ToDouble(sentenceArray(1))
+            SET_NUM_SATELLITES = sentenceArray(7)
+            SET_HDOP = sentenceArray(8)
+            'If unable to parse the coordinate data from the string, ignore whatever value the string has for the 
+            If SetLocation(sentenceArray(2), sentenceArray(3), sentenceArray(4), sentenceArray(5)) Then
+                SET_FIX_QUALITY = sentenceArray(6)
             End If
 
-            Dim sentenceArray() As String = sentence.Split(Convert.ToChar(","))
-
-            If sentenceArray(0).Contains("GGA") Then
-          
-                SET_NUM_SATELLITES = sentenceArray(7)
-                SET_HDOP = sentenceArray(8)
-                SetLocation(sentenceArray(2), sentenceArray(3), sentenceArray(4), sentenceArray(5))
-                SET_FIX_QUALITY = sentenceArray(6)
 
             If HAVE_POSITION Then
                 _timeoutTimer.Stop()
@@ -234,14 +261,16 @@ Public Class NMEAParser
 
             End If
 
+
         ElseIf sentenceArray(0).Contains("RMC") Then
-                SET_VELOCITY(True) = sentenceArray(7)
-                SET_HEADING = sentenceArray(8)
+            SET_VELOCITY(True) = sentenceArray(7)
+            SET_HEADING = sentenceArray(8)
 
 
         ElseIf sentenceArray(0).Contains("VTG") Then
-                SET_HEADING = sentenceArray(1)
-                SET_VELOCITY(False) = sentenceArray(7)
+            SET_HEADING = sentenceArray(1)
+            SET_VELOCITY(False) = sentenceArray(7)
+
 
         End If
 
@@ -249,10 +278,13 @@ Public Class NMEAParser
     End Sub
 
     Public Sub Dispose() Implements IDisposable.Dispose
-            If IsStarted Then
-                StopAsync()
 
-            End If
+        If IsStarted Then
+
+            StopAsync()
+
+            'End If
+        End If
 
     End Sub
 
@@ -298,20 +330,22 @@ Public Class NMEAParser
     End Function
 
     ''' <summary>
-    ''' Internal sub for creating the geometry needed for defining the location on the map.  If a value position is found, then the _havePosition flag is set to True, otherwise set to False
+    ''' Internal Function for creating the geometry needed for defining the location on the map.  If a value position is found, then the _havePosition flag is set to True, otherwise set to False
     ''' </summary>
     ''' <param name="latitude">The latitude value extracted from the NMEA string</param>
     ''' <param name="lat_hemisphere">The hemisphere for the latitude extracted from the NMEA string</param>
     ''' <param name="longitude">The longitude value extracted from the NMEA string</param>
     ''' <param name="long_hemisphere">The hemisphere for the longitude extracted from the NMEA string</param>
-    Private Sub SetLocation(ByVal latitude As String, ByVal lat_hemisphere As String, ByVal longitude As String, ByVal long_hemisphere As String)
+    ''' <returns>True if the a new MapPoint was able to be derived from the passed strings.  False o.w.</returns>
+    Private Function SetLocation(ByVal latitude As String, ByVal lat_hemisphere As String, ByVal longitude As String, ByVal long_hemisphere As String) As Boolean
         Try
             Dim longComponent As Double = ParseCoordinates(longitude, long_hemisphere)
             Dim latComponent As Double = ParseCoordinates(latitude, lat_hemisphere)
 
             If longComponent = Double.NaN OrElse latComponent = Double.NaN Then
-                
+
                 _fixQuality = FixQuality.Invalid
+                Return False
 
             Else
                 If NUM_SATELLITES >= 4 Then
@@ -320,14 +354,17 @@ Public Class NMEAParser
                 End If
 
                 _fixQuality = FixQuality.Estimated
-                    
-                End If
+
+            End If
 
         Catch ex As Exception
-
             _fixQuality = FixQuality.Invalid
+            Return False
+
         End Try
-    End Sub
+
+        Return True
+    End Function
 
 #End Region
 
@@ -340,7 +377,7 @@ Public Class NMEAParser
                 Return False
 
             Else
-                Return _serialPort.IsOpen 
+                Return _serialPort.IsOpen
 
             End If
 
@@ -487,12 +524,14 @@ Public Class NMEAParser
     ''' <summary>
     ''' Updates the Location object based on the available GPS data and pushes it into the Base Class' UpdateLocation sub
     ''' </summary>
-    ''' <param name="New_Position">Flag to indicate whether the location should be treated as a new position or not.  A value of True indicates that it is a new position, False indicates otherwise (i.e., a stale location based on old GPS data)</param>
+    ''' <param name="New_Position">Flag to indicate whether the location should be treated as a new position or not.  A value of True indicates that it is a new position, False indicates otherwise</param>
 
     Protected Sub NEW_LOCATION(ByVal New_Position As Boolean) 'As Location
+        'Get
 
         Dim current_accuracy As Double = 56556
 
+        'If current_accuracy < 0 Then
         If New_Position Then
             Select Case _fixQuality
                 Case FixQuality.GPS_Fix
@@ -506,6 +545,8 @@ Public Class NMEAParser
                 Case FixQuality.RTK, FixQuality.RTK_Float, FixQuality.PPS_Fix
                     current_accuracy = 0.1 * _hdop
 
+                    'Case Else
+                    '    current_accuracy = 56556
 
             End Select
         Else
@@ -518,6 +559,7 @@ Public Class NMEAParser
 
         End If
 
+        'End Get
     End Sub
 
     ''' <summary>
@@ -529,6 +571,7 @@ Public Class NMEAParser
             Return NUM_SATELLITES >= 4 AndAlso Not (_fixQuality = FixQuality.Invalid OrElse _fixQuality = FixQuality.Estimated)
         End Get
     End Property
+
 
 #End Region
 End Class
