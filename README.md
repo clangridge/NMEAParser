@@ -2,8 +2,15 @@
 Using ESRI's Runtime 100.x framework, this class accesses a Serial COM port and provides information based on the NMEA strings read from the port
 
 Class for converting NMEA GPS data supplied through a Serial COM Port into a format that is usable by ESRI's runtime library.
-Notes about usage: When calling the StopAsync function, either dierctly or through MapView.LocationDispaly.IsEnabled, you must either set up an event handler to listen for the HasClosed event in this class or else Await the Task associated with the StopAsync Function.  Until either of these occurs, the user cannot be allowed to restart the application or they can lock the application.  This is due to the resources that the serial port is using being on another thread, so the application needs to wait for that other thread to complete to be sure all the resources have been released and it is safe to reconnect to the com port.
-You must also wait for the HasClosed event to fire or the Task from OnStop to complete when closing the form that originally owned the  instance of the class.  If you don't, the form will not be able to close as it will still be receiving updates from the class, which will block the form from closing.
+Notes about usage: The class's OnStartAsync function will check to see if a previous close requests have been completed, and if not it will wait until the closing operation has been completed before attempting to open a connection to the COM port again.  
+
+While this works well with user requests to stop and start the GPS.  It fails, however, when trying to stop the GPS as part of the FormClosing event because, as it pointed out in the StackOverFlow question https://stackoverflow.com/questions/16656523/awaiting-asynchronous-function-inside-formclosing-event#18200127, having await tasks happen when the form is trying to close rarely ends well.  The cleanest way we have found is:
+1) check if the GPS is running; 
+2) if yes, cancel the closing event;
+3) add a Handler to the HasClosed event; and
+4) when the event fires, have the delegate sub close the form again
+
+Failure to do this will result in either the form not closing as it continues to try and handle the data coming from the COM port or else threading errors as incomplete threads try to terminate.
 
 Before any call to start the class, the COM Port and Baud Rate must be set through the appropriate properties for the class.
 
