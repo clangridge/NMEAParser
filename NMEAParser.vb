@@ -109,23 +109,20 @@ Public Class NMEAParser
 
     Protected Overrides Function OnStopAsync() As Task
 
-        If Me.IsStarted Then
+       If Me.IsStarted Then
             _canRead = False
             _timeoutTimer.Stop()
 
-            Dim taskList As New List(Of Task)(2)
             'Creates a Task to be completed when the Serial COM Port has finished closing
             _closeTask = New TaskCompletionSource(Of Boolean)
-            'taskList.Add(_closeTask.Task)
 
             'Need to convert the Close sub to an action or else the Function hangs on the call to the sub.
             Dim stopAction As Action = AddressOf _serialPort.Close
-            taskList.Add(Task.Run(stopAction))
-
-            Return Task.WhenAll(taskList.ToArray())
+            Return Task.Run(stopAction)
 
         Else
-            Throw New Exception("COM Port already closed.")
+            MsgBox("COM Port already closed.")
+            Return Nothing
 
         End If
 
